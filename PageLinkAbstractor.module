@@ -1,0 +1,203 @@
+<?php
+
+/**
+ * Page Link Abstractor 
+ *
+ * Converts links in textarea fields to an abstract format for storage and converts back at runtime.
+ * 
+ * ProcessWire 2.x 
+ * Copyright (C) 2011 by Ryan Cramer 
+ * Licensed under GNU/GPL v2, see LICENSE.TXT
+ * 
+ * http://www.processwire.com
+ * http://www.ryancramer.com
+ *
+ */
+
+class PageLinkAbstractor extends WireData implements Module {
+
+	/**
+	 * getModuleInfo is a module required by all modules to tell ProcessWire about them
+	 *
+	 * @return array
+	 *
+	 */
+	public static function getModuleInfo() {
+
+		return array(
+
+			// The module'ss title, typically a little more descriptive than the class name
+			'title' => 'Page Link Abstractor', 
+
+			// version: major, minor, revision, i.e. 100 = 1.0.0
+			'version' => 100, 
+
+			// summary is brief description of what this module is
+			'summary' => 	"Converts links in textarea/rich-text fields to an abstract format for storage, and converts them back at runtime. " . 
+					"This means that if you move a page and another page is linking to it, the link won't be broken. " . 
+					"It also means you can move your site from subdirectory to root (or the opposite) and not break links " . 
+					"you may have created in your textarea fields. Note that this module is enabled on a field-by-field basis: you must " . 
+					"edit the field settings and enable it for the textarea fields where you want to use it.";
+			
+			// Optional URL to more information about the module
+			'href' => 'http://www.processwire.com',
+
+			// singular=true: indicates that only one instance of the module is allowed.
+			// This is usually what you want for modules that attach hooks. 
+			'singular' => true, 
+
+			// autoload=true: indicates the module should be started with ProcessWire.
+			// This is necessary for any modules that attach runtime hooks, otherwise those
+			// hooks won't get attached unless some other code calls the module on it's own.
+			// Note that autoload modules are almost always also 'singular' (seen above).
+			'autoload' => true, 
+			);
+	}
+
+	/**
+	 * Initialize the module
+	 *
+	 */
+	public function init() {
+		$this->addHookBefore('FieldtypeTextarea::wakeupValue', $this, 'wakeupValue'); 
+		$this->addHookBefore('FieldtypeTextarea::sleepValue', $this, 'sleepValue'); 
+		$this->addHookAfter('FieldtypeTextarea::getConfigInputfields', $this, 'getConfig'); 
+	}
+
+	/**
+	 * Hook into FieldtypeTextarea::getConfigInputfields to add config option for this module and each textarea field.
+	 *
+	 */
+	public function getConfig($event) {
+
+		$field = $event->arguments[0];	
+		$inputfields = $event->return;
+
+		$f = $this->modules->get("InputfieldRadios"); 
+		$f->attr('name', 'pageLinkAbstractor'); 
+		$f->label = "Enable Page Link Abstractor?";
+		$f->description = 
+			"Use the page link abstractor on fields that may have links to other pages. This will prevent such links from being broken when a page is moved. " . 
+			"This also prevents links from being broken on sites that you may re-install at a different subdirectory. There is some overhead in doing this " . 
+			"as ProcessWire must load all the pages being linked to (at runtime) in order to determine their current URL. You should limit your " . 
+			"usage of this option only to fields where you know it will be useful (like a bodycopy field using a rich text editor, for example). " . 
+			"This option is intended only for admin use, and is not recommended for use on fields with anonymous user input.";
+
+		$f->addOption(0, "Disabled"); 
+		$f->addOption(1, "Convert root URLs only: Prevents broken links when site is moved to/from a subdirectory"); 
+		$f->addOption(2, "Convert root URLs and page URLs: Prevents broken links when linked pages are moved");
+
+		$f->attr('value', (int) $field->pageLinkAbstractor);
+
+		$inputfields->add($f); 
+		$event->return = $inputfields;
+	}
+
+	/**
+	 * Hook into FieldtypeTextarea::wakeupValue to convert abstract URL representations to actual URLs 
+	 *
+	 * Page URLs are represented by {~page_123_url} where "123" is the Page's ID.
+	 * Site root URL is represented just by {~root_url}
+	 *
+	 */
+	public function wakeupValue($event) {
+
+		$isEnabled = $event->arguments[1]->pageLinkAbstractor;
+		if(!$isEnabled) return; 
+		$arguments = $event->arguments; // $page, $field, $value
+		$value = $arguments[2]; 
+		if(empty($value)) return;
+
+		// for debugging:
+		// if($this->config->debug) $this->message("PageLinkAbstractor (wakeupValue): " . $arguments[0]->path . ": " . $arguments[1]->name); 
+
+		$changes = 0;
+		$errors = array();
+
+		if(strpos($value, '{~page_') !== false) { 
+			if(preg_match_all('/\{~page_(\d+)_url\}/', $value, $matches)) {
+				foreach($matches[1] as $key => $id) {
+					$p = $this->pages->get((int) $id); 	
+					if(!$p->id) {
+						// notify editor that they have an invalid link
+						$errors[] = "Links to page ID $id that does not exist";
+						continue;
+					}
+					if($p->isTrash()) {
+						// notify editor tthat they are linking to a page in the trash
+						$errors[] = "Links to page ID $id that is in the trash";
+						continue;
+					}
+					$value = str_replace($matches[0][$key], $p->url, $value); 
+					$changes++;
+				}	
+			} 
+		}
+
+		if(strpos($value, '{~root_url}') !== false) {
+			$value = str_replace('{~root_url}', $this->config->urls->root, $value); 
+			$changes++;
+		}
+
+		if($changes) {
+			$arguments[2] = $value;
+			$event->arguments = $arguments; 
+		}
+
+		if(count($errors)) {
+			$page = $arguments[0]; 
+			if($page->editable()) {
+				foreach($errors as $error) $this->error("Page {$page->path} $error");
+			}
+		}
+		
+
+	}
+
+
+	/**
+	 * Hook into FieldtypeTextarea::sleepValue to convert URLs to abstract representations.  
+	 *
+	 * Page URLs are represented by {~page_123_url} where "123" is the Page's ID.
+	 * Site root URL is represented just by {~root_url}
+	 *
+	 */
+	public function sleepValue($event) {
+
+		$isEnabled = $event->arguments[1]->pageLinkAbstractor; // aka $field->pageLinkAbstractor
+		if(!$isEnabled) return;
+		$arguments = $event->arguments; // $page, $field, $value
+		$value = $arguments[2]; 
+		if(empty($value)) return;
+
+		// for debugging: 
+		// if($this->config->debug) $this->message("PageLinkAbstractor (sleepValue): " . $arguments[0]->path . ": " . $arguments[1]->name); 
+
+		$rootUrl = $this->config->urls->root;
+
+		// check if the value has links by looking for equals sign and quote
+		if(strpos($value, '="') || strpos($value, "='") || strpos($value, "=$rootUrl")) {
+
+			// replace root url with tag, should work with images or tags
+			$value = preg_replace('{(=["\']?)' . preg_quote($rootUrl) . '}', '$1{~root_url}', $value); 
+
+			// replace page URLs
+			if($isEnabled > 1) { 	
+				if(preg_match_all('|\{~root_url\}([-_./a-zA-Z0-9]+)|', $value, $matches)) {
+					$assetsUrl = $this->config->urls->assets; 
+					foreach($matches[1] as $key => $url) {
+						if(strpos($url, $assetsUrl) !== false) continue; 
+						$p = $this->pages->get("/$url"); 
+						if($p->id) $value = str_replace($matches[0][$key], '{~page_' . $p->id . '_url}', $value); 
+					}
+				}
+			}
+
+			// stuff the value back in the arguments sent to the Fieldtype
+			$arguments[2] = $value;
+			$event->arguments = $arguments; 
+		}
+
+	}
+
+}
