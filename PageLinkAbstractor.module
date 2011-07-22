@@ -38,7 +38,7 @@ class PageLinkAbstractor extends WireData implements Module {
 					"This means that if you move a page and another page is linking to it, the link won't be broken. " . 
 					"It also means you can move your site from subdirectory to root (or the opposite) and not break links " . 
 					"you may have created in your textarea fields. Note that this module is enabled on a field-by-field basis: you must " . 
-					"edit the field settings and enable it for the textarea fields where you want to use it.";
+					"edit the field settings and enable it for the textarea fields where you want to use it.",
 			
 			// Optional URL to more information about the module
 			'href' => 'http://www.processwire.com',
