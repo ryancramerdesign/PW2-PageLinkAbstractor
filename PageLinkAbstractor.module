@@ -176,12 +176,12 @@ class PageLinkAbstractor extends WireData implements Module {
 
 		$rootUrl = $this->config->urls->root;
 
-		// check if the value has links by looking for equals sign and quote
-		if(strpos($value, '="') || strpos($value, "='") || strpos($value, "=$rootUrl")) {
+		// check if the value has links by looking for equals sign, quotes, and Markdown brackets
+		if(
+			strpos($value, '="') || strpos($value, "='") || strpos($value, "=$rootUrl") || strpos($value, "]($rootUrl")) {
 
 			// replace root url with tag, should work with images or tags
-			$value = preg_replace('{(=["\']?)' . preg_quote($rootUrl) . '}', '$1{~root_url}', $value); 
-
+			$value = preg_replace('{((=["\']?)|\]\()' . preg_quote($rootUrl) . '}', '$1{~root_url}', $value); 
 			// replace page URLs
 			if($isEnabled > 1) { 	
 				if(preg_match_all('|\{~root_url\}([-_./a-zA-Z0-9]+)|', $value, $matches)) {
